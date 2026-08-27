@@ -11,6 +11,7 @@ import {
   updateStudentApproval,
   fetchPolicyDocs,
   updatePolicyDoc,
+  addRAGDocument,
 } from './api';
 
 export default function App() {
@@ -42,6 +43,13 @@ export default function App() {
   const [editingDocId, setEditingDocId] = useState(null);
   const [docDraftContent, setDocDraftContent] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
+
+  // Admin Ingestion Form State
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocCategory, setNewDocCategory] = useState('General');
+  const [newDocContent, setNewDocContent] = useState('');
+  const [isIngesting, setIsIngesting] = useState(false);
+  const [showAddDocForm, setShowAddDocForm] = useState(false);
 
   // Auto-logout if token exists without a valid role
   useEffect(() => {
@@ -171,6 +179,33 @@ export default function App() {
     setSaveStatus('Document saved and vectors synced successfully!');
     setTimeout(() => setSaveStatus(''), 3000);
     loadAdminData();
+  };
+
+  const handleAddRAGDocument = async (e) => {
+    e.preventDefault();
+    if (!newDocTitle.trim() || !newDocContent.trim()) return;
+    setIsIngesting(true);
+    setSaveStatus('Chunking, embedding, and indexing into Pinecone...');
+
+    try {
+      const res = await addRAGDocument({
+        title: newDocTitle.trim(),
+        category: newDocCategory.trim() || 'General',
+        content: newDocContent.trim(),
+      });
+
+      setSaveStatus(`Success: ${res.message} (${res.chunks_indexed} chunks created)`);
+      setNewDocTitle('');
+      setNewDocCategory('General');
+      setNewDocContent('');
+      setShowAddDocForm(false);
+      setTimeout(() => setSaveStatus(''), 4000);
+      loadAdminData();
+    } catch (err) {
+      setSaveStatus(`Failed: ${err.response?.data?.detail || 'Error adding document.'}`);
+    } finally {
+      setIsIngesting(false);
+    }
   };
 
   // --- Auth View ---
@@ -446,18 +481,91 @@ export default function App() {
           </div>
         )}
 
-        {/* ADMIN: POLICY DOCUMENTS EDITOR */}
+        {/* ADMIN: POLICY DOCUMENTS EDITOR & INGESTION */}
         {userRole === 'admin' && activeTab === 'documents' && (
           <div style={styles.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div>
                 <h3 style={{ margin: 0 }}>University Policy Documents (RAG Knowledge Base)</h3>
                 <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>
-                  Edit policies here. The AI Assistant will instantly sync its Pinecone vectors without touching code.
+                  Add or edit policies here. Content is chunked and synchronized directly into Pinecone.
                 </p>
               </div>
-              {saveStatus && <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 'bold' }}>{saveStatus}</span>}
+              <button
+                onClick={() => setShowAddDocForm(!showAddDocForm)}
+                style={styles.primaryBtn}
+              >
+                {showAddDocForm ? 'Close Ingestion Form' : '+ Add New Document'}
+              </button>
             </div>
+
+            {saveStatus && (
+              <div style={{ marginBottom: '16px', padding: '10px 14px', borderRadius: '6px', backgroundColor: '#f0fdf4', color: '#16a34a', fontWeight: 'bold', fontSize: '13px', border: '1px solid #bbf7d0' }}>
+                {saveStatus}
+              </div>
+            )}
+
+            {/* Ingestion Form */}
+            {showAddDocForm && (
+              <div style={{ ...styles.card, border: '1px solid #93c5fd', backgroundColor: '#eff6ff', marginBottom: '20px' }}>
+                <h4 style={{ margin: '0 0 12px 0', color: '#1e3a8a' }}>Ingest New Knowledge Base Document</h4>
+                <form onSubmit={handleAddRAGDocument} style={{ display: 'grid', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={styles.label}>Document Title</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Lab Safety & Submission Policy"
+                        value={newDocTitle}
+                        onChange={(e) => setNewDocTitle(e.target.value)}
+                        style={styles.input}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.label}>Category</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Policies, Rules, Grading"
+                        value={newDocCategory}
+                        onChange={(e) => setNewDocCategory(e.target.value)}
+                        style={styles.input}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={styles.label}>Content (Paste Text / Outline)</label>
+                    <textarea
+                      rows={6}
+                      placeholder="Paste the full policy text here to automatically chunk, embed, and store into Pinecone..."
+                      value={newDocContent}
+                      onChange={(e) => setNewDocContent(e.target.value)}
+                      style={{ ...styles.input, width: '100%', fontFamily: 'inherit' }}
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddDocForm(false)}
+                      style={styles.secondaryBtn}
+                      disabled={isIngesting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      style={styles.primaryBtn}
+                      disabled={isIngesting}
+                    >
+                      {isIngesting ? 'Embedding & Indexing...' : 'Upload & Index to Pinecone'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gap: '16px' }}>
               {adminDocs.map((doc) => (

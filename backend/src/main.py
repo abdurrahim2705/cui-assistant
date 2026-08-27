@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 sys.path.append(os.path.dirname(__file__))
 from assistant import ask_assistant, get_student_record, sync_all_policies_to_pinecone
 from db import get_db_connection
+from rag_loader import ingest_document
 
 # Load environment configuration (.env contains JWT secrets and database URLs)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -68,6 +69,12 @@ class StudentStatusUpdateRequest(BaseModel):
 
 
 class PolicyDocUpdateRequest(BaseModel):
+    content: str
+
+
+class RAGDocumentCreateRequest(BaseModel):
+    title: str
+    category: str = "General"
     content: str
 
 
@@ -360,6 +367,52 @@ def update_policy_document(doc_id: int, req: PolicyDocUpdateRequest, current_use
     # Synchronize updated text to Pinecone vector store
     sync_all_policies_to_pinecone()
     return {"message": "Document updated and Pinecone vectors synchronized."}
+
+
+@app.post("/admin/rag/add-document")
+def add_rag_document(req: RAGDocumentCreateRequest, current_user: CurrentUser):
+    """
+    Saves a new document into PostgreSQL and indexes its chunks directly into Pinecone.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    # 1. Save document to PostgreSQL policy_documents table
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO policy_documents (category, title, content, updated_at)
+        VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+        RETURNING id;
+        """,
+        (req.category.strip(), req.title.strip(), req.content.strip()),
+    )
+    new_doc = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # 2. Split, embed, and upsert chunks into Pinecone
+    try:
+        chunks_count = ingest_document(
+            text_content=req.content,
+            doc_title=req.title,
+            category=req.category,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database saved, but Pinecone indexing failed: {e!s}",
+        ) from e
+
+    return {
+        "status": "success",
+        "document_id": new_doc["id"],
+        "message": f"Document '{req.title}' saved to database and indexed into Pinecone.",
+        "chunks_indexed": chunks_count,
+    }
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

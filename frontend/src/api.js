@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create central Axios instance pointing to FastAPI backend
 const api = axios.create({
-  baseURL: 'http://127.0.0.1:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000',
 });
 
 // Interceptor: automatically attaches the JWT token from localStorage to every request
@@ -30,3 +30,4 @@ export const fetchAllStudents = async () => (await api.get('/admin/students')).d
 export const updateStudentApproval = async (id, status) => (await api.put(`/admin/students/${id}/status`, { status })).data;
 export const fetchPolicyDocs = async () => (await api.get('/admin/documents')).data;
 export const updatePolicyDoc = async (id, content) => (await api.put(`/admin/documents/${id}`, { content })).data;
+export const addRAGDocument = async (docData) => (await api.post('/admin/rag/add-document', docData)).data;
