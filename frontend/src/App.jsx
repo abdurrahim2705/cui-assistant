@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   loginUser,
   registerStudent,
@@ -26,17 +27,33 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('Password123');
   const [authMsg, setAuthMsg] = useState('');
   const [authError, setAuthError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Student Dashboard State
   const [studentData, setStudentData] = useState(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskCourse, setTaskCourse] = useState('');
   const [taskDueDate, setTaskDueDate] = useState('');
+  const [taskFilter, setTaskFilter] = useState('All');
+  const [taskSearch, setTaskSearch] = useState('');
   const [chatLog, setChatLog] = useState([
     { sender: 'bot', text: 'Welcome to COMSATS Assistant! Ask me anything about university rules, attendance, or tasks.' }
   ]);
   const [chatInput, setChatInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState(null);
+  const chatLogRef = useRef(null);
+  const [theme, setTheme] = useState(localStorage.getItem('cui_theme') || 'default');
+
+  useEffect(() => {
+    chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' });
+  }, [chatLog, isTyping]);
+
+  const handleCopyMessage = async (text, index) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedMessageIndex(index);
+    setTimeout(() => setCopiedMessageIndex(null), 1600);
+  };
 
   // Admin Dashboard State
   const [adminStudents, setAdminStudents] = useState([]);
@@ -44,6 +61,8 @@ export default function App() {
   const [editingDocId, setEditingDocId] = useState(null);
   const [docDraftContent, setDocDraftContent] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [documentSearch, setDocumentSearch] = useState('');
 
   // Admin Ingestion Form State
   const [newDocTitle, setNewDocTitle] = useState('');
@@ -76,6 +95,8 @@ export default function App() {
       if (data.courses?.length > 0 && !taskCourse) setTaskCourse(data.courses[0].code);
     } catch {
       handleLogout();
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -87,6 +108,8 @@ export default function App() {
       setAdminDocs(dRes.documents || []);
     } catch {
       handleLogout();
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -94,6 +117,7 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     setAuthMsg('');
+    setIsLoggingIn(true);
     try {
       const res = await loginUser(regNoInput.trim(), passwordInput.trim());
       localStorage.setItem('cui_token', res.access_token);
@@ -103,6 +127,7 @@ export default function App() {
       setActiveTab(res.role === 'admin' ? 'approvals' : 'dashboard');
     } catch (err) {
       setAuthError(err.response?.data?.detail || 'Login failed.');
+      setIsLoggingIn(false);
     }
   };
 
@@ -150,10 +175,10 @@ export default function App() {
     loadStudentData();
   };
 
-  const handleSendChat = async (e) => {
-    e.preventDefault();
-    if (!chatInput.trim() || isTyping) return;
-    const msg = chatInput;
+  const handleSendChat = async (e, suggestedText = '') => {
+    e?.preventDefault();
+    const msg = suggestedText.trim() || chatInput.trim();
+    if (!msg || isTyping) return;
     setChatInput('');
     setChatLog((prev) => [...prev, { sender: 'user', text: msg }]);
     setIsTyping(true);
@@ -166,6 +191,37 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const shortAttendanceCount = studentData?.courses?.filter((course) => Number(course.attendance_pct) < 80).length || 0;
+  const upcomingDeadlineCount = studentData?.tasks?.filter((task) => {
+    if (!task.due_date) return false;
+    const dueDate = new Date(task.due_date.includes('T') ? task.due_date : `${task.due_date}T23:59:59`);
+    const now = Date.now();
+    return dueDate.getTime() >= now && dueDate.getTime() <= now + 48 * 60 * 60 * 1000;
+  }).length || 0;
+  const filteredTasks = studentData?.tasks?.filter((task) => {
+    const matchesFilter = taskFilter === 'All' || (taskFilter === 'Completed' ? task.status === 'completed' : task.status !== 'completed');
+    const searchTerm = taskSearch.trim().toLowerCase();
+    const matchesSearch = !searchTerm
+      || task.title?.toLowerCase().includes(searchTerm)
+      || task.course_code?.toLowerCase().includes(searchTerm);
+    return matchesFilter && matchesSearch;
+  }) || [];
+  const filteredStudents = adminStudents.filter((student) => {
+    const searchTerm = studentSearch.trim().toLowerCase();
+    return !searchTerm || [student.name, student.registration_no, student.department, student.status]
+      .some((value) => value?.toLowerCase().includes(searchTerm));
+  });
+  const filteredDocuments = adminDocs.filter((document) => {
+    const searchTerm = documentSearch.trim().toLowerCase();
+    return !searchTerm || [document.title, document.category, document.content]
+      .some((value) => value?.toLowerCase().includes(searchTerm));
+  });
+
+  const handleThemeChange = (nextTheme) => {
+    setTheme(nextTheme);
+    localStorage.setItem('cui_theme', nextTheme);
   };
 
   const handleUpdateStudentStatus = async (studentId, status) => {
@@ -274,19 +330,34 @@ export default function App() {
             </button>
           </div>
         </div>
+        {isLoggingIn && (
+          <div className="login-loading" role="status" aria-label="Loading your workspace">
+            <div className="login-loader" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <span>Loading your workspace...</span>
+          </div>
+        )}
       </div>
     );
   }
 
   // --- Dashboard View ---
   return (
-    <div style={styles.appWrapper}>
-      <aside style={styles.sidebar}>
+    <div className={`app-shell theme-${theme}`} style={styles.appWrapper}>
+      <aside className="app-sidebar" style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <h3 style={{ margin: 0, fontSize: '16px', color: '#ffffff' }}>CUI Assistant</h3>
-          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {userRole === 'admin' ? 'Admin Portal' : 'Student Portal'}
-          </span>
+          <div className="assistant-sphere" aria-hidden="true">
+            <span />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', color: '#ffffff' }}>CUI Assistant</h3>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+              {userRole === 'admin' ? 'Admin Portal' : 'Student Portal'}
+            </span>
+          </div>
         </div>
 
         <nav style={styles.sidebarNav}>
@@ -324,14 +395,51 @@ export default function App() {
         </nav>
 
         <div style={styles.sidebarFooter}>
+          <div className="theme-picker">
+            <span className="theme-picker-label">Theme</span>
+            <div className="theme-options" role="group" aria-label="Choose theme">
+              {[
+                ['default', 'Default', '#2563eb'],
+                ['ocean', 'Ocean', '#1598b5'],
+                ['forest', 'Forest', '#4d9a61'],
+              ].map(([value, label, color]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`theme-option ${theme === value ? 'selected' : ''}`}
+                  onClick={() => handleThemeChange(value)}
+                  aria-label={`${label} theme`}
+                  aria-pressed={theme === value}
+                  title={label}
+                >
+                  <span style={{ backgroundColor: color }} />
+                </button>
+              ))}
+            </div>
+          </div>
           <button onClick={handleLogout} style={styles.logoutBtn}>Sign Out</button>
         </div>
       </aside>
 
-      <main style={styles.contentArea}>
+      <main className="app-content" style={styles.contentArea}>
         {/* STUDENT: DASHBOARD & TASKS */}
         {userRole === 'student' && activeTab === 'dashboard' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', height: '100%' }}>
+          <>
+            {(shortAttendanceCount > 0 || upcomingDeadlineCount > 0) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                {shortAttendanceCount > 0 && (
+                  <div style={{ backgroundColor: '#fee2e2', color: '#b91c1c', padding: '10px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>
+                    ⚠️ You have {shortAttendanceCount} course(s) with short attendance.
+                  </div>
+                )}
+                {upcomingDeadlineCount > 0 && (
+                  <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '7px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: '600' }}>
+                    Upcoming deadline{upcomingDeadlineCount > 1 ? 's' : ''}: {upcomingDeadlineCount}
+                  </span>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', height: '100%' }}>
             <div style={styles.card}>
               <h3 style={{ margin: '0 0 16px 0' }}>Academic Profile</h3>
               {studentData?.student && (
@@ -352,14 +460,30 @@ export default function App() {
 
                   <h4 style={{ margin: '16px 0 8px 0', fontSize: '13px', color: '#64748b' }}>ENROLLED COURSES</h4>
                   <div style={{ display: 'grid', gap: '8px' }}>
-                    {studentData.courses?.map((c) => (
-                      <div key={c.code} style={styles.itemBox}>
-                        <div>
-                          <strong>{c.code}</strong> - {c.title}
+                    {studentData.courses?.map((c) => {
+                      const attendance = Math.max(0, Math.min(100, Number(c.attendance_pct) || 0));
+                      const attendanceColor = attendance >= 80 ? '#16a34a' : '#dc2626';
+
+                      return (
+                        <div key={c.code} style={styles.itemBox}>
+                          <div style={{ flex: 1 }}>
+                            <strong>{c.code}</strong> - {c.title}
+                            <div className="attendance-progress-track">
+                              <div
+                                className="attendance-progress-bar"
+                                style={{ width: `${attendance}%`, backgroundColor: attendanceColor }}
+                              />
+                            </div>
+                          </div>
+                          <span
+                            className="attendance-badge"
+                            style={{ backgroundColor: attendanceColor }}
+                          >
+                            {attendance >= 80 ? `${attendance}% Att.` : `Short · ${attendance}%`}
+                          </span>
                         </div>
-                        <span style={{ fontWeight: 'bold' }}>{c.attendance_pct}% Att.</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -390,11 +514,38 @@ export default function App() {
                 <button type="submit" style={styles.primaryBtn}>Add</button>
               </form>
 
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+                {['All', 'Pending', 'Completed'].map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setTaskFilter(filter)}
+                    style={{
+                      ...styles.taskFilter,
+                      backgroundColor: taskFilter === filter ? '#2563eb' : '#e2e8f0',
+                      color: taskFilter === filter ? '#fff' : '#334155',
+                    }}
+                  >
+                    {filter}
+                  </button>
+                ))}
+                <input
+                  type="search"
+                  placeholder="Search tasks..."
+                  value={taskSearch}
+                  onChange={(e) => setTaskSearch(e.target.value)}
+                  aria-label="Search tasks by title or course code"
+                  style={{ ...styles.input, flex: 1, minWidth: '150px', marginLeft: 'auto' }}
+                />
+              </div>
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '500px' }}>
                 {studentData?.tasks?.length === 0 ? (
                   <p style={{ color: '#94a3b8', textAlign: 'center', margin: '20px 0' }}>No tasks added yet. Add one above or tell the AI assistant!</p>
+                ) : filteredTasks.length === 0 ? (
+                  <p style={{ color: '#94a3b8', textAlign: 'center', margin: '20px 0' }}>No matching tasks.</p>
                 ) : (
-                  studentData?.tasks?.map((t) => (
+                  filteredTasks.map((t) => (
                     <div key={t.id} style={styles.itemBox}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <input type="checkbox" checked={t.status === 'completed'} onChange={() => handleToggleTask(t.id, t.status)} />
@@ -412,17 +563,19 @@ export default function App() {
                 )}
               </div>
             </div>
-          </div>
+            </div>
+          </>
         )}
 
         {/* STUDENT: FULL PAGE CHAT */}
         {userRole === 'student' && activeTab === 'chat' && (
           <div style={{ ...styles.card, height: '100%', display: 'flex', flexDirection: 'column' }}>
             <h3 style={{ margin: '0 0 12px 0' }}>COMSATS AI Academic Copilot</h3>
-            <div style={styles.chatLog}>
+            <div ref={chatLogRef} style={styles.chatLog}>
               {chatLog.map((m, i) => (
                 <div
                   key={i}
+                  className={m.sender === 'bot' ? 'ai-chat-bubble' : undefined}
                   style={{
                     ...styles.bubble,
                     alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
@@ -430,11 +583,57 @@ export default function App() {
                     color: m.sender === 'user' ? '#fff' : '#0f172a',
                   }}
                 >
-                  {m.text}
+                  {m.sender === 'bot' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="copy-message-button"
+                        onClick={() => handleCopyMessage(m.text, i)}
+                        aria-label="Copy AI response"
+                        title={copiedMessageIndex === i ? 'Copied!' : 'Copy response'}
+                      >
+                        {copiedMessageIndex === i ? 'Copied!' : 'Copy'}
+                      </button>
+                      <div className="markdown-content">
+                        <ReactMarkdown>{m.text}</ReactMarkdown>
+                      </div>
+                    </>
+                  ) : m.text}
                 </div>
               ))}
-              {isTyping && <div style={{ fontSize: '12px', color: '#64748b' }}>Assistant is typing...</div>}
+              {isTyping && (
+                <div className="assistant-thinking" role="status" aria-label="Assistant is thinking">
+                  <span className="thinking-orb" aria-hidden="true">
+                    <span />
+                  </span>
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </div>
+              )}
             </div>
+            {chatLog.length === 1 && chatLog[0].sender === 'bot' && (
+              <div className="suggested-prompts" aria-label="Suggested prompts">
+                {[
+                  'What are the hostel options?',
+                  'Check my attendance summary',
+                  'What are the rules for fee installments?',
+                  'Add a task: Prepare for Quiz next Monday',
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="suggested-prompt"
+                    onClick={() => handleSendChat(null, prompt)}
+                    disabled={isTyping}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            )}
             <form onSubmit={handleSendChat} style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
               <input
                 type="text"
@@ -452,6 +651,14 @@ export default function App() {
         {userRole === 'admin' && activeTab === 'approvals' && (
           <div style={styles.card}>
             <h3 style={{ margin: '0 0 16px 0' }}>Student Registrations & Approvals</h3>
+            <input
+              type="search"
+              placeholder="Search students..."
+              value={studentSearch}
+              onChange={(e) => setStudentSearch(e.target.value)}
+              aria-label="Search student approvals"
+              style={{ ...styles.input, marginBottom: '16px' }}
+            />
             <table style={styles.table}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
@@ -463,7 +670,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {adminStudents.map((s) => (
+                {filteredStudents.map((s) => (
                   <tr key={s.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
                     <td style={styles.td}><strong>{s.name}</strong></td>
                     <td style={styles.td}>{s.registration_no}</td>
@@ -498,6 +705,14 @@ export default function App() {
         {/* ADMIN: POLICY DOCUMENTS EDITOR & INGESTION */}
         {userRole === 'admin' && activeTab === 'documents' && (
           <div style={styles.card}>
+            <input
+              type="search"
+              placeholder="Search policy documents..."
+              value={documentSearch}
+              onChange={(e) => setDocumentSearch(e.target.value)}
+              aria-label="Search policy documents"
+              style={{ ...styles.input, marginBottom: '16px' }}
+            />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div>
                 <h3 style={{ margin: 0 }}>University Policy Documents (RAG Knowledge Base)</h3>
@@ -582,7 +797,7 @@ export default function App() {
             )}
 
             <div style={{ display: 'grid', gap: '16px' }}>
-              {adminDocs.map((doc) => (
+              {filteredDocuments.map((doc) => (
                 <div key={doc.id} style={{ ...styles.card, border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <div>
@@ -618,6 +833,16 @@ export default function App() {
           </div>
         )}
       </main>
+      {isLoggingIn && (
+        <div className="login-loading" role="status" aria-label="Loading your workspace">
+          <div className="login-loader" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <span>Loading your workspace...</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -637,6 +862,7 @@ const styles = {
   input: { width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' },
   primaryBtn: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
   secondaryBtn: { backgroundColor: '#e2e8f0', color: '#334155', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' },
+  taskFilter: { border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' },
   logoutBtn: { width: '100%', backgroundColor: '#ef4444', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
   approveBtn: { backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' },
   rejectBtn: { backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' },
