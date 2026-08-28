@@ -12,6 +12,7 @@ import {
   fetchPolicyDocs,
   updatePolicyDoc,
   addRAGDocument,
+  deletePolicyDoc,
 } from './api';
 
 export default function App() {
@@ -205,6 +206,19 @@ export default function App() {
       setSaveStatus(`Failed: ${err.response?.data?.detail || 'Error adding document.'}`);
     } finally {
       setIsIngesting(false);
+    }
+  };
+
+  const handleDeleteDoc = async (docId, title) => {
+    if (!window.confirm(`Are you sure you want to delete "${title}"?`)) return;
+    setSaveStatus(`Deleting "${title}"...`);
+    try {
+      await deletePolicyDoc(docId);
+      setSaveStatus(`"${title}" deleted successfully!`);
+      setTimeout(() => setSaveStatus(''), 3000);
+      loadAdminData();
+    } catch (err) {
+      setSaveStatus(`Failed to delete document: ${err.response?.data?.detail || 'Error'}`);
     }
   };
 
@@ -488,7 +502,7 @@ export default function App() {
               <div>
                 <h3 style={{ margin: 0 }}>University Policy Documents (RAG Knowledge Base)</h3>
                 <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '13px' }}>
-                  Add or edit policies here. Content is chunked and synchronized directly into Pinecone.
+                  Add, edit, or remove policies. Content is automatically synced with Pinecone vector search.
                 </p>
               </div>
               <button
@@ -570,7 +584,7 @@ export default function App() {
             <div style={{ display: 'grid', gap: '16px' }}>
               {adminDocs.map((doc) => (
                 <div key={doc.id} style={{ ...styles.card, border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <div>
                       <span style={styles.miniTag}>{doc.category}</span>
                       <strong style={{ fontSize: '15px' }}>{doc.title}</strong>
@@ -581,7 +595,10 @@ export default function App() {
                         <button onClick={() => setEditingDocId(null)} style={styles.secondaryBtn}>Cancel</button>
                       </div>
                     ) : (
-                      <button onClick={() => { setEditingDocId(doc.id); setDocDraftContent(doc.content); }} style={styles.secondaryBtn}>Edit Document</button>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={() => { setEditingDocId(doc.id); setDocDraftContent(doc.content); }} style={styles.secondaryBtn}>Edit Document</button>
+                        <button onClick={() => handleDeleteDoc(doc.id, doc.title)} style={styles.rejectBtn}>Delete</button>
+                      </div>
                     )}
                   </div>
 

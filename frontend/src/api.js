@@ -31,3 +31,4 @@ export const updateStudentApproval = async (id, status) => (await api.put(`/admi
 export const fetchPolicyDocs = async () => (await api.get('/admin/documents')).data;
 export const updatePolicyDoc = async (id, content) => (await api.put(`/admin/documents/${id}`, { content })).data;
 export const addRAGDocument = async (docData) => (await api.post('/admin/rag/add-document', docData)).data;
+export const deletePolicyDoc = async (id) => (await api.delete(`/admin/documents/${id}`)).data;

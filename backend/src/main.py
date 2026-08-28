@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pinecone import Pinecone
 from pydantic import BaseModel, ValidationError
 
 # Add current directory to path so local modules import reliably
@@ -412,6 +413,47 @@ def add_rag_document(req: RAGDocumentCreateRequest, current_user: CurrentUser):
         "message": f"Document '{req.title}' saved to database and indexed into Pinecone.",
         "chunks_indexed": chunks_count,
     }
+
+
+@app.delete("/admin/documents/{doc_id}")
+def delete_policy_document(doc_id: int, current_user: CurrentUser):
+    """
+    Deletes a policy document from PostgreSQL and removes corresponding vectors from Pinecone.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # 1. Check if document exists and get its title for Pinecone metadata filtering
+    cur.execute("SELECT title FROM policy_documents WHERE id = %s;", (doc_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    doc_title = row["title"]
+
+    # 2. Delete from PostgreSQL
+    cur.execute("DELETE FROM policy_documents WHERE id = %s;", (doc_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # 3. Delete matching vectors from Pinecone
+    try:
+        pinecone_key = os.getenv("PINECONE_API_KEY")
+        index_name = os.getenv("PINECONE_INDEX_NAME", "cui-assistant")
+        if pinecone_key:
+            pc = Pinecone(api_key=pinecone_key)
+            index = pc.Index(index_name)
+            index.delete(filter={"title": {"$eq": doc_title}})
+    except Exception as e:  # noqa: BLE001
+        print(f"Warning: Failed to delete Pinecone vectors for '{doc_title}': {e}")
+
+    return {"message": f"Document '{doc_title}' deleted successfully from database and Pinecone."}
 
 
 if __name__ == "__main__":

@@ -1,12 +1,14 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Load environment variables from your .env file (e.g., GEMINI_API_KEY, PINECONE_INDEX_NAME)
-load_dotenv()
+# Explicitly load .env from project root
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 
 def ingest_document(text_content: str, doc_title: str, category: str = "General") -> int:
@@ -22,17 +24,24 @@ def ingest_document(text_content: str, doc_title: str, category: str = "General"
     if not clean_text:
         raise ValueError("Document content cannot be empty.")
 
-    # 2. Text Splitting:
-    # LLMs handle smaller text chunks better during vector search.
-    # - chunk_size=1000: Each piece will have roughly 1000 characters.
-    # - chunk_overlap=150: Keeps 150 characters from the previous chunk to maintain context between splits.
+    # 2. Retrieve & validate API keys
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    index_name = os.getenv("PINECONE_INDEX_NAME", "cui-assistant")
+    pinecone_key = os.getenv("PINECONE_API_KEY")
+
+    if not gemini_key:
+        raise ValueError("GEMINI_API_KEY / GOOGLE_API_KEY is missing from environment variables.")
+    if not pinecone_key:
+        raise ValueError("PINECONE_API_KEY is missing from environment variables.")
+
+    # 3. Text Splitting:
+    # 500 characters provides optimal semantic granularity for policy rules and FAQs
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=150,
-        separators=["\n\n", "\n", " ", ""]
+        chunk_size=500,
+        chunk_overlap=100,
+        separators=["\n\n", "\n", ". ", " ", ""]
     )
     
-    # Create document chunks and attach metadata (title, category, upload source)
     docs = splitter.create_documents(
         texts=[clean_text],
         metadatas=[{
@@ -42,21 +51,18 @@ def ingest_document(text_content: str, doc_title: str, category: str = "General"
         }]
     )
 
-    # 3. Embedding Model:
-    # Converts each text chunk into a high-dimensional mathematical vector (list of numbers).
+    # 4. Embedding Model
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=os.getenv("GEMINI_API_KEY")
+        model="gemini-embedding-001",
+        google_api_key=gemini_key,
+        output_dimensionality=768,
     )
 
-    # 4. Pinecone Vector Storage:
-    # Uploads the text chunks alongside their vector embeddings into your cloud index.
-    index_name = os.getenv("PINECONE_INDEX_NAME")
+    # 5. Pinecone Vector Storage
     PineconeVectorStore.from_documents(
         documents=docs,
         embedding=embeddings,
-        index_name=index_name
+        index_name=index_name,
     )
 
-    # Return the total count so the frontend can notify the admin
     return len(docs)
